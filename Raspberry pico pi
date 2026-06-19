@@ -1,0 +1,246 @@
+from machine import I2C, Pin, PWM, Timer
+import bmp280
+import time
+import math
+
+# ============================================
+# CONFIGURAÇÃO DOS PINOS
+# ============================================
+I2C_SDA = Pin(4)        # GP4 - Pino físico 6
+I2C_SCL = Pin(5)        # GP5 - Pino físico 7
+SERVO_PIN = Pin(15)     # GP15 - Pino físico 20
+LED_PIN = Pin(25, Pin.OUT)  # LED onboard do Pico
+
+# ============================================
+# PARÂMETROS DE VOO
+# ============================================
+APOGEE_THRESHOLD = 5.0      # Diferença de altitude (metros) para detectar apogeu
+DEBOUNCE_COUNT = 10         # Leituras consecutivas para evitar falsos disparos
+LAUNCH_DELAY = 5            # Segundos de espera antes de iniciar monitoramento
+SAMPLE_RATE = 0.05          # Taxa de amostragem (50ms = 20Hz)
+
+# ============================================
+# CONSTANTES FÍSICAS
+# ============================================
+R = 8.314       # Constante dos gases (J/(mol·K))
+g = 9.81        # Aceleração da gravidade (m/s²)
+M = 0.029       # Massa molar do ar (kg/mol)
+
+# ============================================
+# INICIALIZAÇÃO DOS COMPONENTES
+# ============================================
+
+# Configurar I2C
+i2c = I2C(0, sda=I2C_SDA, scl=I2C_SCL, freq=400000)
+
+# Inicializar BMP280
+try:
+    bmp = bmp280.BMP280(i2c)
+    print("✓ BMP280 inicializado com sucesso!")
+except Exception as e:
+    print(f"✗ ERRO ao inicializar BMP280: {e}")
+    print("Verifique as ligações I2C (SDA=GP4, SCL=GP5)")
+    while True:
+        LED_PIN.toggle()
+        time.sleep(0.5)
+
+# Configurar Servo Motor (PWM a 50Hz)
+servo = PWM(SERVO_PIN)
+servo.freq(50)
+
+# ============================================
+# FUNÇÕES AUXILIARES
+# ============================================
+
+def servo_angle(angle):
+    """
+    Controla o ângulo do servo motor (0 a 180 graus)
+    Mapeia 0-180° para duty cycle 2500-12500
+    """
+    duty = int(2500 + (angle / 180) * 10000)
+    servo.duty_u16(duty)
+
+def pressure_to_altitude(P, P0, T=288.15):
+    """
+    Calcula altitude a partir da pressão atmosférica
+    Fórmula hipsométrica
+    """
+    if P <= 0 or P0 <= 0:
+        return 0.0
+    h = (R * T) / (g * M) * math.log(P0 / P)
+    return h
+
+def deploy_parachute():
+    """
+    Sequência de disparo do paraquedas
+    """
+    print("\n" + "="*50)
+    print(">>> APOGEU DETECTADO! DISPARANDO PARAQUEDAS <<<")
+    print("="*50)
+    
+    # Posição 0° (pino inserido)
+    servo_angle(0)
+    time.sleep(0.5)
+    
+    # Posição 90° (puxa o pino)
+    servo_angle(90)
+    time.sleep(1.5)
+    
+    # Retorna à posição 0°
+    servo_angle(0)
+    
+    # Pisca LED para indicar sucesso
+    for i in range(5):
+        LED_PIN.toggle()
+        time.sleep(0.2)
+    
+    print("✓ Paraquedas disparado com sucesso!")
+
+def calibrate_sensor():
+    """
+    Calibra o sensor BMP280 antes do lançamento
+    """
+    print("\nCalibrando sensor... Mantenha o foguete imóvel.")
+    
+    pressures = []
+    for i in range(50):
+        try:
+            P = bmp.pressure
+            pressures.append(P)
+            print(f"  Leitura {i+1}/50: {P:.2f} hPa")
+        except:
+            print(f"  Leitura {i+1}/50: ERRO")
+        time.sleep(0.1)
+    
+    P0 = sum(pressures) / len(pressures)
+    print(f"\n✓ Pressão calibrada: {P0:.2f} hPa")
+    return P0
+
+def countdown(seconds):
+    """
+    Contagem regressiva com LED
+    """
+    print(f"\n⚠ ATENÇÃO! Lançamento em {seconds} segundos...")
+    for i in range(seconds, 0, -1):
+        print(f"  {i}...")
+        LED_PIN.toggle()
+        time.sleep(1)
+    LED_PIN.off()
+    print("🚀 FOGUETE NO AR! Monitorando apogeu.\n")
+
+# ============================================
+# PROGRAMA PRINCIPAL
+# ============================================
+
+def main():
+    """
+    Loop principal do sistema de voo
+    """
+    print("="*50)
+    print("FOGUETE DE ÁGUA - SISTEMA DE VOO")
+    print("Raspberry Pi Pico + BMP280")
+    print("="*50)
+    
+    # 1. Calibração inicial
+    P0 = calibrate_sensor()
+    
+    # 2. Contagem regressiva
+    countdown(LAUNCH_DELAY)
+    
+    # 3. Variáveis de voo
+    h_max = 0.0
+    apogee_detected = False
+    parachute_deployed = False
+    drop_counter = 0
+    flight_data = []
+    t_start = time.time()
+    
+    # 4. Loop de voo
+    try:
+        while True:
+            t = time.time() - t_start
+            
+            # Leitura dos sensores
+            try:
+                P = bmp.pressure          # hPa
+                T = bmp.temperature       # °C
+                h = pressure_to_altitude(P, P0, T + 273.15)
+            except Exception as e:
+                print(f"Erro na leitura: {e}")
+                time.sleep(0.1)
+                continue
+            
+            # Atualiza altitude máxima
+            if h > h_max:
+                h_max = h
+                drop_counter = 0  # Reseta contador se subiu mais
+            
+            # Armazena dados
+            flight_data.append({
+                't': round(t, 2),
+                'P': round(P, 2),
+                'T': round(T, 2),
+                'h': round(h, 2)
+            })
+            
+            # Detecta apogeu (após 2 segundos de voo)
+            if t > 2.0 and not apogee_detected:
+                if h < (h_max - APOGEE_THRESHOLD):
+                    drop_counter += 1
+                else:
+                    drop_counter = 0
+                
+                # Se a altitude caiu consistentemente
+                if drop_counter >= DEBOUNCE_COUNT:
+                    apogee_detected = True
+                    print(f"\n📍 APOGEU DETECTADO em t={t:.2f}s")
+                    print(f"   Altitude máxima: {h_max:.2f}m")
+            
+            # Dispara paraquedas no apogeu
+            if apogee_detected and not parachute_deployed:
+                deploy_parachute()
+                parachute_deployed = True
+            
+            # Telemetria via Serial (a cada ~200ms)
+            if int(t * 5) != int((t - SAMPLE_RATE) * 5):
+                status = "DISPARADO" if parachute_deployed else "SUBINDO"
+                print(f"t={t:5.2f}s | h={h:7.2f}m | Max={h_max:7.2f}m | "
+                      f"P={P:7.2f}hPa | {status}")
+            
+            # Condição de parada (após 30s ou pouso detectado)
+            if t > 30 or (parachute_deployed and h < 5):
+                break
+            
+            time.sleep(SAMPLE_RATE)
+    
+    except KeyboardInterrupt:
+        print("\n⚠ Interrupção manual detectada")
+    
+    finally:
+        # 5. Relatório final
+        print("\n" + "="*50)
+        print("=== FIM DO VOO ===")
+        print(f"Tempo total: {t:.2f}s")
+        print(f"Altitude máxima: {h_max:.2f}m")
+        print(f"Apogeu detectado: {'Sim' if apogee_detected else 'Não'}")
+        print(f"Paraquedas disparado: {'Sim' if parachute_deployed else 'Não'}")
+        print(f"Total de leituras: {len(flight_data)}")
+        print("="*50)
+        
+        # Salvar dados no Pico (opcional)
+        try:
+            with open('flight_data.csv', 'w') as f:
+                f.write("timestamp,pressure,temperature,altitude\n")
+                for data in flight_data:
+                    f.write(f"{data['t']},{data['P']},{data['T']},{data['h']}\n")
+            print("✓ Dados salvos em 'flight_data.csv'")
+        except Exception as e:
+            print(f"✗ Erro ao salvar dados: {e}")
+        
+        # Desliga servo
+        servo.deinit()
+        LED_PIN.off()
+
+# Executa o programa
+if __name__ == "__main__":
+    main()
