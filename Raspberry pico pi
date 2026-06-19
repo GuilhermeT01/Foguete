@@ -3,32 +3,30 @@ import bmp280
 import time
 import math
 
-# ============================================
 # CONFIGURAÇÃO DOS PINOS
-# ============================================
+
 I2C_SDA = Pin(4)        # GP4 - Pino físico 6
 I2C_SCL = Pin(5)        # GP5 - Pino físico 7
 SERVO_PIN = Pin(15)     # GP15 - Pino físico 20
 LED_PIN = Pin(25, Pin.OUT)  # LED onboard do Pico
 
-# ============================================
 # PARÂMETROS DE VOO
-# ============================================
+
 APOGEE_THRESHOLD = 5.0      # Diferença de altitude (metros) para detectar apogeu
 DEBOUNCE_COUNT = 10         # Leituras consecutivas para evitar falsos disparos
 LAUNCH_DELAY = 5            # Segundos de espera antes de iniciar monitoramento
 SAMPLE_RATE = 0.05          # Taxa de amostragem (50ms = 20Hz)
 
-# ============================================
+
 # CONSTANTES FÍSICAS
-# ============================================
+
 R = 8.314       # Constante dos gases (J/(mol·K))
 g = 9.81        # Aceleração da gravidade (m/s²)
 M = 0.029       # Massa molar do ar (kg/mol)
 
-# ============================================
+
 # INICIALIZAÇÃO DOS COMPONENTES
-# ============================================
+
 
 # Configurar I2C
 i2c = I2C(0, sda=I2C_SDA, scl=I2C_SCL, freq=400000)
@@ -36,9 +34,9 @@ i2c = I2C(0, sda=I2C_SDA, scl=I2C_SCL, freq=400000)
 # Inicializar BMP280
 try:
     bmp = bmp280.BMP280(i2c)
-    print("✓ BMP280 inicializado com sucesso!")
+    print(" BMP280 inicializado com sucesso!")
 except Exception as e:
-    print(f"✗ ERRO ao inicializar BMP280: {e}")
+    print(f" ERRO ao inicializar BMP280: {e}")
     print("Verifique as ligações I2C (SDA=GP4, SCL=GP5)")
     while True:
         LED_PIN.toggle()
@@ -48,9 +46,7 @@ except Exception as e:
 servo = PWM(SERVO_PIN)
 servo.freq(50)
 
-# ============================================
 # FUNÇÕES AUXILIARES
-# ============================================
 
 def servo_angle(angle):
     """
@@ -94,7 +90,7 @@ def deploy_parachute():
         LED_PIN.toggle()
         time.sleep(0.2)
     
-    print("✓ Paraquedas disparado com sucesso!")
+    print(" Paraquedas disparado com sucesso!")
 
 def calibrate_sensor():
     """
@@ -126,11 +122,9 @@ def countdown(seconds):
         LED_PIN.toggle()
         time.sleep(1)
     LED_PIN.off()
-    print("🚀 FOGUETE NO AR! Monitorando apogeu.\n")
+    print(" FOGUETE NO AR! Monitorando apogeu.\n")
 
-# ============================================
 # PROGRAMA PRINCIPAL
-# ============================================
 
 def main():
     """
@@ -193,7 +187,7 @@ def main():
                 # Se a altitude caiu consistentemente
                 if drop_counter >= DEBOUNCE_COUNT:
                     apogee_detected = True
-                    print(f"\n📍 APOGEU DETECTADO em t={t:.2f}s")
+                    print(f"\n APOGEU DETECTADO em t={t:.2f}s")
                     print(f"   Altitude máxima: {h_max:.2f}m")
             
             # Dispara paraquedas no apogeu
@@ -233,9 +227,9 @@ def main():
                 f.write("timestamp,pressure,temperature,altitude\n")
                 for data in flight_data:
                     f.write(f"{data['t']},{data['P']},{data['T']},{data['h']}\n")
-            print("✓ Dados salvos em 'flight_data.csv'")
+            print(" Dados salvos em 'flight_data.csv'")
         except Exception as e:
-            print(f"✗ Erro ao salvar dados: {e}")
+            print(f" Erro ao salvar dados: {e}")
         
         # Desliga servo
         servo.deinit()
